@@ -1,0 +1,30 @@
+# Build
+app/build/
+build/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# IDE
+.idea/
+*.iml
+.local.properties
+
+# Gradle
+.gradle/
+gradle-wrapper.jar
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kotlin
+*.class
+*.jar
+*.war
+*.nar
+hs_err_pid*
+
+# Lottie JSON (source, not needed in repo)
+斜线动效.json
