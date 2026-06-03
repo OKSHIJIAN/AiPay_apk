@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.aipay.listener.app-debug-67:/drawable_ic_launcher.xml.flat",
+        "source": "com.aipay.listener.app-main-69:/drawable/ic_launcher.xml"
+    },
+    {
+        "merged": "com.aipay.listener.app-debug-67:/raw_stripe_animation.gif.flat",
+        "source": "com.aipay.listener.app-main-69:/raw/stripe_animation.gif"
+    }
+]
