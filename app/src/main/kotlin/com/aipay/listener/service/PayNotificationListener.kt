@@ -4,6 +4,7 @@ import android.app.Notification
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import com.aipay.listener.data.PayRepository
 import com.aipay.listener.data.SettingsRepository
 import com.aipay.listener.util.AmountParser
@@ -30,25 +31,43 @@ class PayNotificationListener : NotificationListenerService() {
 
         scope.launch {
             val settings = settingsRepository.settings.first()
-            if (!settings.monitoringEnabled) return@launch
-            if (channel == "wechat" && !settings.listenWechat) return@launch
-            if (channel == "alipay" && !settings.listenAlipay) return@launch
+            if (!settings.monitoringEnabled) {
+                Log.w("AiPay", "通知到达但监听未开启 channel=$channel")
+                return@launch
+            }
+            if (channel == "wechat" && !settings.listenWechat) {
+                Log.w("AiPay", "微信监听已关闭，跳过")
+                return@launch
+            }
+            if (channel == "alipay" && !settings.listenAlipay) {
+                Log.w("AiPay", "支付宝监听已关闭，跳过")
+                return@launch
+            }
 
             val extras = sbn.notification.extras
             val title = extras.textValue(Notification.EXTRA_TITLE)
             val text = extras.textValue(Notification.EXTRA_TEXT)
             val bigText = extras.textValue(Notification.EXTRA_BIG_TEXT)
             val raw = buildRawNotification(sbn.packageName, extras)
+
+            Log.d("AiPay", "=== 通知到达 === channel=$channel | title=$title | text=$text")
+            Log.d("AiPay", "raw=$raw")
+
+            val displayText = text.ifBlank { bigText }
+
+            // 调试模式：无条件记入日志（金额为 0 表示未匹配），方便排查
+            if (settings.debugMode) {
+                payRepository.createDebugLog(channel, title, displayText, raw)
+            }
+
             val amount = AmountParser.parseAmount(channel, raw, settings.minAmount)
+            Log.d("AiPay", "解析结果: amount=$amount | debugMode=${settings.debugMode} | minAmount=${settings.minAmount}")
 
             if (amount == null) {
-                if (settings.debugMode) {
-                    payRepository.createDebugLog(channel, title, text.ifBlank { bigText }, raw)
-                }
                 return@launch
             }
 
-            val logId = payRepository.createLog(channel, amount, title, text.ifBlank { bigText }, raw)
+            val logId = payRepository.createLog(channel, amount, title, displayText, raw)
             val ok = payRepository.report(logId)
             if (!ok) payRepository.enqueueRetry(logId, attempt = 1)
         }

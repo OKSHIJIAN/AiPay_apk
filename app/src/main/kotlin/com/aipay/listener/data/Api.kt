@@ -23,6 +23,21 @@ data class NotifyResponse(
     val reason: String? = null
 )
 
+@Serializable
+data class OrderDto(
+    val id: String,
+    val amount: Double,
+    val status: String,
+    val channel: String = "",
+    val createdAt: Long? = null
+)
+
+@Serializable
+data class KvStringEntry(val value: String)
+
+@Serializable
+data class KvOrderEntry(val value: OrderDto)
+
 data class ApiReportResult(val status: String, val response: String)
 
 class ApiClient {
@@ -74,4 +89,48 @@ class ApiClient {
                 )
             }
         }
+
+    suspend fun fetchOrders(settings: AppSettings): List<Order> = withContext(Dispatchers.IO) {
+        val supabaseRef = "qlsmtkqdvbionwpmhoyu"
+        val kvUrl = "https://$supabaseRef.supabase.co/rest/v1/kv_store_41dc007f"
+        val anonKey = BuildConfig.SUPABASE_ANON_KEY
+
+        // Step 1: 从 API Key 解析 merchantId
+        val merchantIdReq = Request.Builder()
+            .url("$kvUrl?select=value&key=eq.${java.net.URLEncoder.encode("apikey:${settings.apiKey}", "UTF-8")}")
+            .header("apikey", anonKey)
+            .get()
+            .build()
+        val merchantId = client.newCall(merchantIdReq).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw IOException("查询账户失败 HTTP ${response.code}: $body")
+            val parsed = json.decodeFromString<List<KvStringEntry>>(body)
+            parsed.firstOrNull()?.value
+                ?: throw IOException("未找到 API Key 对应的账户")
+        }
+
+        // Step 2: 查询该商户的所有订单
+        val ordersReq = Request.Builder()
+            .url("$kvUrl?select=value&key=like.${java.net.URLEncoder.encode("order:$merchantId:*", "UTF-8")}")
+            .header("apikey", anonKey)
+            .get()
+            .build()
+        client.newCall(ordersReq).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw IOException("查询订单失败 HTTP ${response.code}: $body")
+            val parsed = json.decodeFromString<List<KvOrderEntry>>(body)
+            parsed.map { entry ->
+                val dto = entry.value
+                Order(
+                    orderId = dto.id,
+                    amount = dto.amount,
+                    status = dto.status,
+                    channel = dto.channel,
+                    createdAt = dto.createdAt ?: System.currentTimeMillis(),
+                    paidAt = null,
+                    description = ""
+                )
+            }
+        }
+    }
 }

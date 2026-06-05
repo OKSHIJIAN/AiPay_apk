@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -41,10 +42,13 @@ import com.aipay.listener.data.ApiClient
 import com.aipay.listener.data.AppDatabase
 import com.aipay.listener.data.AppSettings
 import com.aipay.listener.data.LogStatus
+import com.aipay.listener.data.Order
 import com.aipay.listener.data.SettingsRepository
 import com.aipay.listener.service.KeepAliveService
 import com.aipay.listener.ui.HomeScreen
 import com.aipay.listener.ui.LogsScreen
+import com.aipay.listener.ui.OrdersScreen
+import com.aipay.listener.ui.PermissionState
 import com.aipay.listener.ui.SettingsScreen
 import com.aipay.listener.ui.theme.AiPayTheme
 import com.journeyapps.barcodescanner.ScanContract
@@ -56,9 +60,13 @@ import java.time.ZoneId
 class MainActivity : ComponentActivity() {
     private lateinit var settingsRepository: SettingsRepository
     private var hasNotificationAccess by mutableStateOf(false)
+    private var hasPostNotificationPermission by mutableStateOf(false)
+    private var isBatteryOptimizationIgnored by mutableStateOf(false)
 
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasPostNotificationPermission = granted
+        }
 
     private val scanLauncher = registerForActivityResult(ScanContract()) { result ->
         val contents = result.contents ?: return@registerForActivityResult
@@ -70,6 +78,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         settingsRepository = SettingsRepository(this)
         hasNotificationAccess = isNotificationListenerEnabled()
+        hasPostNotificationPermission = checkPostNotificationPermission()
+        isBatteryOptimizationIgnored = isIgnoringBatteryOptimizations()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -80,8 +90,16 @@ class MainActivity : ComponentActivity() {
                 AiPayAppContent(
                     settingsRepository = settingsRepository,
                     hasNotificationAccess = hasNotificationAccess,
+                    hasPostNotificationPermission = hasPostNotificationPermission,
+                    isBatteryOptimizationIgnored = isBatteryOptimizationIgnored,
                     onOpenNotificationSettings = {
                         startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    },
+                    onOpenNotificationPermissionSettings = {
+                        openAppNotificationSettings()
+                    },
+                    onOpenBatterySettings = {
+                        requestBatteryWhitelist()
                     },
                     onToggleMonitoring = { enabled ->
                         lifecycleScope.launch { settingsRepository.updateMonitoringEnabled(enabled) }
@@ -103,6 +121,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         hasNotificationAccess = isNotificationListenerEnabled()
+        hasPostNotificationPermission = checkPostNotificationPermission()
+        isBatteryOptimizationIgnored = isIgnoringBatteryOptimizations()
     }
 
     private fun startKeepAliveService() {
@@ -126,10 +146,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openAppNotificationSettings() {
+        val intent = Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(AndroidSettings.EXTRA_APP_PACKAGE, packageName)
+        }
+        startActivity(intent)
+    }
+
     private fun isNotificationListenerEnabled(): Boolean {
         val enabled = AndroidSettings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
         val component = ComponentName(this, "com.aipay.listener.service.PayNotificationListener").flattenToString()
         return enabled.split(":").any { it.equals(component, ignoreCase = true) || it.contains(packageName) }
+    }
+
+    private fun checkPostNotificationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Android 13 以下不需要此权限
+        }
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        val powerManager = getSystemService(PowerManager::class.java)
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
     }
 }
 
@@ -137,7 +177,11 @@ class MainActivity : ComponentActivity() {
 private fun AiPayAppContent(
     settingsRepository: SettingsRepository,
     hasNotificationAccess: Boolean,
+    hasPostNotificationPermission: Boolean,
+    isBatteryOptimizationIgnored: Boolean,
     onOpenNotificationSettings: () -> Unit,
+    onOpenNotificationPermissionSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
     onToggleMonitoring: (Boolean) -> Unit,
     onScanApiKey: () -> Unit
 ) {
@@ -145,6 +189,7 @@ private fun AiPayAppContent(
     val scope = rememberCoroutineScope()
     val settings by settingsRepository.settings.collectAsState(initial = AppSettings())
     val dao = remember { AppDatabase.get(context).logDao() }
+    val orderDao = remember { AppDatabase.get(context).orderDao() }
     val todayStart = remember {
         LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
@@ -154,8 +199,60 @@ private fun AiPayAppContent(
     val success by dao.countByStatus(todayStart, LogStatus.SUCCESS).collectAsState(initial = 0)
     val failed by dao.countByStatus(todayStart, LogStatus.FAILED).collectAsState(initial = 0)
     var healthResult by remember { mutableStateOf("") }
+    val orders by orderDao.all().collectAsState(initial = emptyList())
+    var isLoadingOrders by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     val navController = rememberNavController()
-    val items = listOf(Screen.Home, Screen.Settings, Screen.Logs)
+    val items = listOf(Screen.Home, Screen.Orders, Screen.Logs, Screen.Settings)
+
+    // 权限状态列表
+    val permissionStates = remember(hasNotificationAccess, hasPostNotificationPermission, isBatteryOptimizationIgnored) {
+        listOf(
+            PermissionState(
+                name = "通知监听服务",
+                description = "允许读取微信/支付宝收款通知",
+                granted = hasNotificationAccess,
+                onOpenSettings = onOpenNotificationSettings
+            ),
+            PermissionState(
+                name = "通知权限",
+                description = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) "Android 13+ 需要此权限发送通知" else "已自动获得",
+                granted = hasPostNotificationPermission,
+                onOpenSettings = onOpenNotificationPermissionSettings
+            ),
+            PermissionState(
+                name = "电池优化白名单",
+                description = "避免系统杀掉后台服务，确保稳定运行",
+                granted = isBatteryOptimizationIgnored,
+                onOpenSettings = onOpenBatterySettings
+            )
+        )
+    }
+
+    val loadOrders: suspend () -> Unit = {
+        if (settings.apiKey.isNotBlank()) {
+            isLoadingOrders = true
+            runCatching {
+                val fetched = ApiClient().fetchOrders(settings)
+                orderDao.insertAll(fetched)
+                loadError = null
+            }.onFailure { e ->
+                loadError = "拉取失败：${e.message}"
+                android.util.Log.w("AiPay", "拉取订单失败: ${e.message}")
+            }
+            isLoadingOrders = false
+        }
+    }
+
+    // 每次切到订单页时自动加载
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    androidx.compose.runtime.LaunchedEffect(backStackEntry?.destination?.route) {
+        if (backStackEntry?.destination?.route == Screen.Orders.route
+            && settings.apiKey.isNotBlank()
+        ) {
+            loadOrders()
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -175,6 +272,16 @@ private fun AiPayAppContent(
         }
     ) { paddingValues ->
         NavHost(navController, startDestination = Screen.Home.route, modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+            composable(Screen.Orders.route) {
+                OrdersScreen(
+                    settings = settings,
+                    orders = orders,
+                    notifications = allLogs.take(50),
+                    isLoading = isLoadingOrders,
+                    loadError = loadError,
+                    onLoadOrders = loadOrders
+                )
+            }
             composable(Screen.Home.route) {
                 HomeScreen(
                     settings = settings,
@@ -190,6 +297,7 @@ private fun AiPayAppContent(
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     settings = settings,
+                    permissions = permissionStates,
                     healthResult = healthResult,
                     onApiBaseChange = { scope.launch { settingsRepository.updateApiBaseUrl(it) } },
                     onApiKeyChange = { scope.launch { settingsRepository.updateApiKey(it) } },
@@ -220,6 +328,7 @@ private sealed class Screen(
     val icon: androidx.compose.ui.graphics.vector.ImageVector
 ) {
     data object Home : Screen("home", "首页", Icons.Default.Home)
-    data object Settings : Screen("settings", "设置", Icons.Default.Settings)
+    data object Orders : Screen("orders", "订单", Icons.Default.Receipt)
     data object Logs : Screen("logs", "日志", Icons.Default.List)
+    data object Settings : Screen("settings", "设置", Icons.Default.Settings)
 }
