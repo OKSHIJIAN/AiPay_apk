@@ -25,6 +25,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -190,6 +191,7 @@ private fun AiPayAppContent(
     val settings by settingsRepository.settings.collectAsState(initial = AppSettings())
     val dao = remember { AppDatabase.get(context).logDao() }
     val orderDao = remember { AppDatabase.get(context).orderDao() }
+    val templateDao = remember { AppDatabase.get(context).templateDao() }
     val todayStart = remember {
         LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
@@ -199,7 +201,8 @@ private fun AiPayAppContent(
     val success by dao.countByStatus(todayStart, LogStatus.SUCCESS).collectAsState(initial = 0)
     val failed by dao.countByStatus(todayStart, LogStatus.FAILED).collectAsState(initial = 0)
     var healthResult by remember { mutableStateOf("") }
-    val orders by orderDao.all().collectAsState(initial = emptyList())
+    val orders by orderDao.today(todayStart).collectAsState(initial = emptyList())
+    val templates by templateDao.all().collectAsState(initial = emptyList())
     var isLoadingOrders by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
     val navController = rememberNavController()
@@ -241,6 +244,18 @@ private fun AiPayAppContent(
                 android.util.Log.w("AiPay", "拉取订单失败: ${e.message}")
             }
             isLoadingOrders = false
+        }
+    }
+
+    // 定期检测服务器连接状态
+    var serverOnline by remember { mutableStateOf(false) }
+    LaunchedEffect(settings.apiBaseUrl) {
+        while (true) {
+            serverOnline = runCatching {
+                ApiClient().health(settings.apiBaseUrl, settings.apiKey)
+                true
+            }.getOrDefault(false)
+            kotlinx.coroutines.delay(10_000)
         }
     }
 
@@ -286,6 +301,7 @@ private fun AiPayAppContent(
                 HomeScreen(
                     settings = settings,
                     hasNotificationAccess = hasNotificationAccess,
+                    serverOnline = serverOnline,
                     recentLogs = recentLogs,
                     captured = captured,
                     success = success,
@@ -299,6 +315,7 @@ private fun AiPayAppContent(
                     settings = settings,
                     permissions = permissionStates,
                     healthResult = healthResult,
+                    templates = templates,
                     onApiBaseChange = { scope.launch { settingsRepository.updateApiBaseUrl(it) } },
                     onApiKeyChange = { scope.launch { settingsRepository.updateApiKey(it) } },
                     onScanApiKey = onScanApiKey,
@@ -311,8 +328,13 @@ private fun AiPayAppContent(
                     },
                     onWechatChange = { scope.launch { settingsRepository.updateListenWechat(it) } },
                     onAlipayChange = { scope.launch { settingsRepository.updateListenAlipay(it) } },
-                    onDebugModeChange = { scope.launch { settingsRepository.updateDebugMode(it) } },
-                    onMinAmountChange = { scope.launch { settingsRepository.updateMinAmount(it) } }
+                    onMinAmountChange = { scope.launch { settingsRepository.updateMinAmount(it) } },
+                    onAddTemplate = { scope.launch { templateDao.insert(it) } },
+                    onUpdateTemplate = { scope.launch { templateDao.update(it) } },
+                    onDeleteTemplate = { scope.launch { templateDao.delete(it) } },
+                    onToggleTemplate = { template, enabled ->
+                        scope.launch { templateDao.update(template.copy(enabled = enabled)) }
+                    }
                 )
             }
             composable(Screen.Logs.route) {

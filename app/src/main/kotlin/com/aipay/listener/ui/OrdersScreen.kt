@@ -108,6 +108,14 @@ fun OrdersScreen(
                             items(orders, key = { it.orderId }) { order ->
                                 OrderItemCard(order, Modifier.clickable { selectedOrder = order })
                             }
+                            item {
+                                Text(
+                                    "仅展示今日订单，更多请前往后台查看",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = AiMuted,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                                )
+                            }
                         }
                     }
                 }

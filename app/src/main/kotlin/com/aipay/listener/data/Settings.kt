@@ -19,8 +19,7 @@ data class AppSettings(
     val listenWechat: Boolean = true,
     val listenAlipay: Boolean = true,
     val minAmount: Double = 0.0,
-    val monitoringEnabled: Boolean = false,
-    val debugMode: Boolean = false
+    val monitoringEnabled: Boolean = false
 )
 
 class SettingsRepository(private val context: Context) {
@@ -31,7 +30,6 @@ class SettingsRepository(private val context: Context) {
         val listenAlipay = booleanPreferencesKey("listen_alipay")
         val minAmount = doublePreferencesKey("min_amount")
         val monitoringEnabled = booleanPreferencesKey("monitoring_enabled")
-        val debugMode = booleanPreferencesKey("debug_mode")
     }
 
     val settings: Flow<AppSettings> = context.settingsStore.data.map { prefs ->
@@ -41,8 +39,7 @@ class SettingsRepository(private val context: Context) {
             listenWechat = prefs[Keys.listenWechat] ?: true,
             listenAlipay = prefs[Keys.listenAlipay] ?: true,
             minAmount = prefs[Keys.minAmount] ?: 0.0,
-            monitoringEnabled = prefs[Keys.monitoringEnabled] ?: false,
-            debugMode = prefs[Keys.debugMode] ?: false
+            monitoringEnabled = prefs[Keys.monitoringEnabled] ?: false
         )
     }
 
@@ -52,7 +49,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateListenAlipay(value: Boolean) = updateBoolean(Keys.listenAlipay, value)
     suspend fun updateMinAmount(value: Double) = context.settingsStore.edit { it[Keys.minAmount] = value.coerceAtLeast(0.0) }
     suspend fun updateMonitoringEnabled(value: Boolean) = updateBoolean(Keys.monitoringEnabled, value)
-    suspend fun updateDebugMode(value: Boolean) = updateBoolean(Keys.debugMode, value)
 
     private suspend fun updateString(key: androidx.datastore.preferences.core.Preferences.Key<String>, value: String) {
         context.settingsStore.edit { it[key] = value }

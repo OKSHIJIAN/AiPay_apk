@@ -17,6 +17,9 @@ interface OrderDao {
     @Query("SELECT * FROM orders ORDER BY createdAt DESC")
     fun all(): Flow<List<Order>>
 
+    @Query("SELECT * FROM orders WHERE createdAt >= :since ORDER BY createdAt DESC")
+    fun today(since: Long): Flow<List<Order>>
+
     @Query("SELECT * FROM orders WHERE orderId = :orderId")
     suspend fun getById(orderId: String): Order?
 

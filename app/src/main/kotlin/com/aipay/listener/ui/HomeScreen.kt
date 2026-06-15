@@ -1,5 +1,10 @@
 package com.aipay.listener.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -11,15 +16,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +47,7 @@ import com.aipay.listener.ui.theme.AiYellow
 fun HomeScreen(
     settings: AppSettings,
     hasNotificationAccess: Boolean,
+    serverOnline: Boolean,
     recentLogs: List<PaymentLog>,
     captured: Int,
     success: Int,
@@ -53,6 +64,7 @@ fun HomeScreen(
             RunningStatusCard(
                 running = settings.monitoringEnabled,
                 hasNotificationAccess = hasNotificationAccess,
+                serverOnline = serverOnline,
                 onOpenNotificationSettings = onOpenNotificationSettings
             )
         }
@@ -91,9 +103,26 @@ fun HomeScreen(
 private fun RunningStatusCard(
     running: Boolean,
     hasNotificationAccess: Boolean,
+    serverOnline: Boolean,
     onOpenNotificationSettings: () -> Unit
 ) {
     val background = if (running) AiYellow else AiMuted
+
+    // 服务连接状态（右上角）
+    val svcConnected = running && hasNotificationAccess
+    val svcDotColor = when {
+        svcConnected -> Color(0xFF1F9D55)
+        running -> Color(0xFFF59E0B)
+        else -> Color(0xFF9CA3AF)
+    }
+    val svcLabel = when {
+        svcConnected -> "已连接"
+        running -> "未授权"
+        else -> "已停止"
+    }
+
+    // 服务器连接状态（右上角下方）
+    val srvDotColor = if (serverOnline) Color(0xFF1F9D55) else Color(0xFFEF4444)
 
     Box(
         modifier = Modifier
@@ -118,6 +147,29 @@ private fun RunningStatusCard(
                 contentScale = ContentScale.Crop
             )
         }
+
+        // 右上角状态指示器
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.End
+        ) {
+            // 服务连接状态
+            ServiceStatusDot(
+                dotColor = svcDotColor,
+                label = svcLabel,
+                pulsing = svcConnected
+            )
+            // 服务器连接状态
+            ServiceStatusDot(
+                dotColor = srvDotColor,
+                label = if (serverOnline) "服务器在线" else "服务器离线",
+                pulsing = serverOnline
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -145,5 +197,49 @@ private fun RunningStatusCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ServiceStatusDot(
+    dotColor: Color,
+    label: String,
+    pulsing: Boolean
+) {
+    val infiniteTransition = rememberInfiniteTransition()
+
+    val dotAlpha by if (pulsing) {
+        infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(800),
+                repeatMode = RepeatMode.Reverse
+            )
+        )
+    } else {
+        infiniteTransition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 0.5f,
+            animationSpec = infiniteRepeatable(tween(1))
+        )
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(dotColor.copy(alpha = dotAlpha))
+                .border(1.dp, AiBlack, CircleShape)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = AiBlack
+        )
     }
 }
