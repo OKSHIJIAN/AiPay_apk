@@ -1,3 +1,6 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,6 +8,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
 }
+
+val buildTime: String = SimpleDateFormat("yyyyMMdd-HHmm").format(Date())
 
 android {
     namespace = "com.aipay.listener"
@@ -22,6 +27,16 @@ android {
             "String",
             "SUPABASE_ANON_KEY",
             "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsc210a3FkdmJpb253cG1ob3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzNzQyNDMsImV4cCI6MjA5NTk1MDI0M30.ChWsdXjFk5RiaimVgfkHzrUA0wPj2AdbQvJ_FxpklQE\""
+        )
+        buildConfigField(
+            "String",
+            "SUPABASE_URL",
+            "\"https://qlsmtkqdvbionwpmhoyu.supabase.co\""
+        )
+        buildConfigField(
+            "String",
+            "BUILD_TIME",
+            "\"$buildTime\""
         )
     }
 
@@ -65,6 +80,7 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

@@ -40,10 +40,10 @@ class PayRepository(context: Context) {
             )
         )
 
-    suspend fun report(logId: Long, retryCount: Int = 0): Boolean {
+    suspend fun report(logId: Long, retryCount: Int = 0, uptime: Long = 0): Boolean {
         val log = dao.getById(logId) ?: return true
         return runCatching {
-            val result = api.notify(settingsRepository.settings.first(), log.amount, log.channel)
+            val result = api.notify(settingsRepository.settings.first(), log.amount, log.channel, uptime)
             dao.updateResult(logId, result.status, result.response, retryCount)
             true
         }.getOrElse { error ->

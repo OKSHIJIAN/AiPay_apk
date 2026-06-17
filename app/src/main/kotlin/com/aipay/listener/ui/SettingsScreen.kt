@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aipay.listener.BuildConfig
 import com.aipay.listener.data.AmountMarkData
 import com.aipay.listener.data.AppSettings
 import com.aipay.listener.data.NotificationTemplate
@@ -163,6 +164,15 @@ fun SettingsScreen(
                 }
             }
         }
+
+        // 版本号
+        Text(
+            text = "v${BuildConfig.VERSION_NAME}  build ${BuildConfig.BUILD_TIME}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 
     // 添加/编辑模板对话框

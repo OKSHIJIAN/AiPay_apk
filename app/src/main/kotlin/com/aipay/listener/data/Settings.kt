@@ -19,7 +19,7 @@ data class AppSettings(
     val listenWechat: Boolean = true,
     val listenAlipay: Boolean = true,
     val minAmount: Double = 0.0,
-    val monitoringEnabled: Boolean = false
+    val monitoringEnabled: Boolean = true
 )
 
 class SettingsRepository(private val context: Context) {
@@ -39,7 +39,7 @@ class SettingsRepository(private val context: Context) {
             listenWechat = prefs[Keys.listenWechat] ?: true,
             listenAlipay = prefs[Keys.listenAlipay] ?: true,
             minAmount = prefs[Keys.minAmount] ?: 0.0,
-            monitoringEnabled = prefs[Keys.monitoringEnabled] ?: false
+            monitoringEnabled = prefs[Keys.monitoringEnabled] ?: true
         )
     }
 

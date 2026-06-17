@@ -1,6 +1,7 @@
 package com.aipay.listener
 
 import android.Manifest
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -46,14 +48,18 @@ import com.aipay.listener.data.LogStatus
 import com.aipay.listener.data.Order
 import com.aipay.listener.data.SettingsRepository
 import com.aipay.listener.service.KeepAliveService
+import com.aipay.listener.service.DebugLog
+import com.aipay.listener.service.PayNotificationListener
 import com.aipay.listener.ui.HomeScreen
 import com.aipay.listener.ui.LogsScreen
 import com.aipay.listener.ui.OrdersScreen
 import com.aipay.listener.ui.PermissionState
+import com.aipay.listener.ui.DebugScreen
 import com.aipay.listener.ui.SettingsScreen
 import com.aipay.listener.ui.theme.AiPayTheme
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -86,6 +92,15 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        // 启动时自动开启监听服务
+        lifecycleScope.launch {
+            val currentSettings = settingsRepository.settings.first()
+            if (currentSettings.monitoringEnabled) {
+                DebugLog.i("MainActivity", "自动启动监听服务")
+                startKeepAliveService()
+            }
+        }
+
         setContent {
             AiPayTheme {
                 AiPayAppContent(
@@ -103,8 +118,13 @@ class MainActivity : ComponentActivity() {
                         requestBatteryWhitelist()
                     },
                     onToggleMonitoring = { enabled ->
+                        DebugLog.i("MainActivity", "监听开关: $enabled")
                         lifecycleScope.launch { settingsRepository.updateMonitoringEnabled(enabled) }
-                        if (enabled) startKeepAliveService() else stopService(Intent(this, KeepAliveService::class.java))
+                        if (enabled) {
+                            startKeepAliveService()
+                        } else {
+                            stopService(Intent(this, KeepAliveService::class.java))
+                        }
                     },
                     onScanApiKey = {
                         scanLauncher.launch(
@@ -124,6 +144,12 @@ class MainActivity : ComponentActivity() {
         hasNotificationAccess = isNotificationListenerEnabled()
         hasPostNotificationPermission = checkPostNotificationPermission()
         isBatteryOptimizationIgnored = isIgnoringBatteryOptimizations()
+
+        // 记录监听器连接状态
+        DebugLog.i("MainActivity",
+            "监听器状态: created=${PayNotificationListener.isServiceCreated} connected=${PayNotificationListener.isServiceConnected} " +
+            "lastConnected=${if(PayNotificationListener.lastConnectedAt > 0) "${(System.currentTimeMillis()-PayNotificationListener.lastConnectedAt)/1000}s前" else "从未"}"
+        )
     }
 
     private fun startKeepAliveService() {
@@ -206,7 +232,7 @@ private fun AiPayAppContent(
     var isLoadingOrders by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
     val navController = rememberNavController()
-    val items = listOf(Screen.Home, Screen.Orders, Screen.Logs, Screen.Settings)
+    val items = listOf(Screen.Home, Screen.Orders, Screen.Logs, Screen.Settings, Screen.Debug)
 
     // 权限状态列表
     val permissionStates = remember(hasNotificationAccess, hasPostNotificationPermission, isBatteryOptimizationIgnored) {
@@ -259,6 +285,17 @@ private fun AiPayAppContent(
         }
     }
 
+    // 定期读取监听器连接状态（静态变量变化不会自动触发 Compose 重组）
+    var listenerConnected by remember { mutableStateOf(PayNotificationListener.isServiceConnected) }
+    var listenerLastConnectedAt by remember { mutableStateOf(PayNotificationListener.lastConnectedAt) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            listenerConnected = PayNotificationListener.isServiceConnected
+            listenerLastConnectedAt = PayNotificationListener.lastConnectedAt
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+
     // 每次切到订单页时自动加载
     val backStackEntry by navController.currentBackStackEntryAsState()
     androidx.compose.runtime.LaunchedEffect(backStackEntry?.destination?.route) {
@@ -301,13 +338,15 @@ private fun AiPayAppContent(
                 HomeScreen(
                     settings = settings,
                     hasNotificationAccess = hasNotificationAccess,
+                    isListenerConnected = listenerConnected,
+                    lastConnectedAt = listenerLastConnectedAt,
                     serverOnline = serverOnline,
                     recentLogs = recentLogs,
                     captured = captured,
                     success = success,
                     failed = failed,
                     onToggleMonitoring = onToggleMonitoring,
-                    onOpenNotificationSettings = onOpenNotificationSettings
+                    onOpenNotificationSettings = onOpenNotificationSettings,
                 )
             }
             composable(Screen.Settings.route) {
@@ -340,6 +379,9 @@ private fun AiPayAppContent(
             composable(Screen.Logs.route) {
                 LogsScreen(logs = allLogs, onRefresh = {})
             }
+            composable(Screen.Debug.route) {
+                DebugScreen()
+            }
         }
     }
 }
@@ -353,4 +395,5 @@ private sealed class Screen(
     data object Orders : Screen("orders", "订单", Icons.Default.Receipt)
     data object Logs : Screen("logs", "日志", Icons.Default.List)
     data object Settings : Screen("settings", "设置", Icons.Default.Settings)
+    data object Debug : Screen("debug", "调试", Icons.Default.Star)
 }

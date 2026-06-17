@@ -14,7 +14,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 @Serializable
-data class NotifyRequest(val amount: Double, val channel: String)
+data class NotifyRequest(val amount: Double, val channel: String, val uptime: Long = 0)
 
 @Serializable
 data class NotifyResponse(
@@ -68,10 +68,27 @@ class ApiClient {
         }
     }
 
-    suspend fun notify(settings: AppSettings, amount: Double, channel: String): ApiReportResult =
+    /** 心跳上报：让服务器知道手机在线，网页端「支付监听」页可看到真实在线状态 */
+    suspend fun heartbeat(settings: AppSettings, uptime: Long): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = "{\"uptime\":$uptime}".toRequestBody(mediaType)
+            val request = Request.Builder()
+                .url("${settings.apiBaseUrl.trimEnd('/')}/heartbeat")
+                .header("X-Api-Key", settings.apiKey)
+                .header("Content-Type", "application/json")
+                .post(body)
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    suspend fun notify(settings: AppSettings, amount: Double, channel: String, uptime: Long = 0): ApiReportResult =
         withContext(Dispatchers.IO) {
             require(settings.apiKey.startsWith("aip_")) { "API Key 格式应为 aip_xxxxxxxx" }
-            val body = json.encodeToString(NotifyRequest.serializer(), NotifyRequest(amount, channel))
+            val body = json.encodeToString(NotifyRequest.serializer(), NotifyRequest(amount, channel, uptime))
                 .toRequestBody(mediaType)
             val request = Request.Builder()
                 .url("${settings.apiBaseUrl.trimEnd('/')}/notify")

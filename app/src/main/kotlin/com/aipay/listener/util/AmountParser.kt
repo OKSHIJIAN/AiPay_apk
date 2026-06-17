@@ -13,9 +13,10 @@ object AmountParser {
         """(?:成功收款|收款|收到|到账)[\s\S]{0,120}?(?:[¥￥]\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?))(?:\s*元)?"""
     )
 
-    // 聚合通知专用正则：处理 "[N条]微信支付: ... ¥X.XX" 格式
+    // 聚合通知专用正则：处理 "[N条]微信支付: ... ¥X.XX" 或 "[N条]...到账¥X.XX" 格式
+    // 同时兼容：有/无 ¥ 符号，有/无 元 后缀
     private val WECHAT_AGGREGATE = Regex(
-        """\[\d+条\].*?(?:微信支付|收款码.*?到账).*?[¥￥]\s*(\d+(?:\.\d{1,2})?)"""
+        """\[\d+条\].*?(?:微信支付|收款码.*?到账|个人收款码到账).*?(?:[¥￥]\s*)?(\d+(?:\.\d{1,2})?)(?:\s*元)?"""
     )
 
     private val incomeAmount = Regex(
@@ -30,6 +31,20 @@ object AmountParser {
         if (normalizedContent.isBlank()) return null
         if (outboundKeywords.any { normalizedContent.contains(it) }) return null
 
+        // 【关键修复】先检查聚合通知 "[N条]" 格式，优先提取里面的实际金额
+        // 避免把 "[9条]" 中的 "9" 误识别为金额
+        val aggregate = WECHAT_AGGREGATE.find(normalizedContent)?.amountGroup()
+        if (aggregate != null) {
+            val value = aggregate.toDoubleOrNull()
+            if (value != null) {
+                val rounded = round(value * 100.0) / 100.0
+                return rounded.takeIf { it >= minAmount }
+            }
+        }
+
+        // 剥离 [N条] 前缀后，用主正则匹配
+        val cleanedContent = normalizedContent.replace(Regex("""\[\d+条\]"""), "")
+
         val regex = when (channel) {
             "wechat" -> WECHAT_AMOUNT
             "alipay" -> ALIPAY_AMOUNT
@@ -37,17 +52,11 @@ object AmountParser {
         }
 
         // 尝试主正则
-        var raw = regex.find(normalizedContent)?.amountGroup()
+        var raw = regex.find(cleanedContent)?.amountGroup()
 
         // 主正则失败 → 兜底 incomeAmount 通用正则
         if (raw == null) {
-            raw = incomeAmount.find(normalizedContent)?.amountGroup()
-        }
-
-        // 微信聚合通知特殊处理：[N条] 前缀的不匹配通用正则，单独处理
-        val aggregate = WECHAT_AGGREGATE.find(normalizedContent)?.amountGroup()
-        if (aggregate != null) {
-            raw = aggregate
+            raw = incomeAmount.find(cleanedContent)?.amountGroup()
         }
 
         val value = raw?.toDoubleOrNull() ?: return null

@@ -1,7 +1,10 @@
 package com.aipay.listener.service
 
 import android.app.Notification
+import android.content.ComponentName
+import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -27,33 +30,60 @@ class PayNotificationListener : NotificationListenerService() {
         settingsRepository = SettingsRepository(this)
         payRepository = PayRepository(this)
         templateDao = AppDatabase.get(this).templateDao()
-        Log.d("AiPay", "=== PayNotificationListener 已创建 ===")
+        isServiceCreated = true
+        // 某些 ROM 重新授权后只触发 onCreate 不触发 onListenerConnected，在此兜底
+        if (!isServiceConnected) {
+            isServiceConnected = true
+            lastConnectedAt = System.currentTimeMillis()
+        }
+        Log.d("AiPay", "=== PayNotificationListener 已创建 connected=$isServiceConnected ===")
+        DebugLog.i("AiPay", "PayNotificationListener onCreate connected=$isServiceConnected")
     }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        isServiceConnected = true
+        lastConnectedAt = System.currentTimeMillis()
         Log.d("AiPay", "=== 通知监听服务已连接 ===")
+        DebugLog.i("AiPay", "通知监听服务已连接 ✓")
     }
 
     override fun onListenerDisconnected() {
-        Log.d("AiPay", "=== 通知监听服务已断开 ===")
+        isServiceConnected = false
+        Log.w("AiPay", "=== 通知监听服务已断开！尝试重新绑定 ===")
+        DebugLog.w("AiPay", "通知监听服务已断开！调用 requestRebind…")
+        try {
+            val ok = requestRebind(ComponentName(this, PayNotificationListener::class.java))
+            Log.d("AiPay", "=== requestRebind 结果: $ok")
+            DebugLog.i("AiPay", "requestRebind 返回: $ok")
+        } catch (e: Exception) {
+            Log.e("AiPay", "requestRebind 失败", e)
+            DebugLog.e("AiPay", "requestRebind 异常: ${e.message}")
+        }
         super.onListenerDisconnected()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
 
-        // ★ 第一行日志：在协程之外，确认 onNotificationPosted 是否被调用
-        Log.d("AiPay", ">>> onNotificationPosted: pkg=${sbn.packageName} key=${sbn.key}")
+        // 能收到通知说明监听器已连接
+        if (!isServiceConnected) {
+            isServiceConnected = true
+            lastConnectedAt = System.currentTimeMillis()
+            Log.d("AiPay", ">>> 通过通知检测到监听器已连接")
+        }
 
-        // 打印 extras 中所有 key，帮助诊断
+        val pkg = sbn.packageName
+        Log.d("AiPay", ">>> onNotificationPosted: pkg=$pkg key=${sbn.key}")
+
+        // 打出所有通知（不过滤），帮助诊断
         val allKeys = sbn.notification.extras.keySet().joinToString(", ")
         Log.d("AiPay", ">>> extras keys: [$allKeys]")
 
         scope.launch {
             try {
                 val settings = settingsRepository.settings.first()
-                Log.d("AiPay", ">>> monitoringEnabled=${settings.monitoringEnabled} listenWechat=${settings.listenWechat}")
+                Log.d("AiPay", ">>> monitorEnabled=${settings.monitoringEnabled} wechat=${settings.listenWechat} alipay=${settings.listenAlipay}")
 
                 if (!settings.monitoringEnabled) {
                     Log.d("AiPay", ">>> 跳过：monitoringEnabled=false")
@@ -67,73 +97,70 @@ class PayNotificationListener : NotificationListenerService() {
                 val raw = buildRawNotification(sbn.packageName, extras)
                 val displayText = text.ifBlank { bigText }
 
-                // 1. 先尝试内置微信/支付宝渠道匹配
+                // 1. 内置微信/支付宝渠道匹配
                 val channel = packageToChannel(sbn.packageName)
                 if (channel != null) {
                     if (channel == "wechat" && !settings.listenWechat) {
-                        Log.d("AiPay", ">>> 跳过：listenWechat=false")
+                        DebugLog.i("AiPay", "跳过微信通知（listenWechat=false）")
                         return@launch
                     }
                     if (channel == "alipay" && !settings.listenAlipay) {
-                        Log.d("AiPay", ">>> 跳过：listenAlipay=false")
+                        DebugLog.i("AiPay", "跳过支付宝通知（listenAlipay=false）")
                         return@launch
                     }
 
-                    Log.d("AiPay", "=== 通知到达(内置渠道) === channel=$channel | package=${sbn.packageName} | title=$title | text=$text")
-                    Log.d("AiPay", "=== raw notification:\n$raw")
+                    DebugLog.i("AiPay", "收到${if(channel=="wechat")"微信" else "支付宝"}通知: title=$title text=$text")
+                    Log.d("AiPay", "=== raw:\n$raw")
 
                     payRepository.createDebugLog(channel, title, displayText, raw)
 
                     val amount = AmountParser.parseAmount(channel, raw, settings.minAmount)
-                    Log.d("AiPay", "=== parseAmount result: $amount (minAmount=${settings.minAmount})")
+                    Log.d("AiPay", "=== parseAmount: $amount (min=${settings.minAmount})")
                     if (amount != null) {
+                        DebugLog.i("AiPay", "金额解析成功: ¥$amount → 上报服务器")
                         handleMatched(channel, amount, title, displayText, raw)
+                    } else {
+                        DebugLog.w("AiPay", "金额解析失败，通知内容: ${raw.take(200)}")
                     }
                     return@launch
                 }
 
-                // 2. 尝试用户自定义模板匹配
+                // 2. 用户自定义模板
                 val templates = templateDao.getEnabledOnce()
                 if (templates.isEmpty()) {
-                    Log.d("AiPay", ">>> 跳过：无自定义模板且包名不匹配内置渠道")
                     return@launch
                 }
 
-                Log.d("AiPay", "=== 通知到达(模板匹配) === package=${sbn.packageName} | title=$title | templates=${templates.size}个")
-
                 for (template in templates) {
                     if (!matchesTemplate(title, displayText, template)) continue
-
-                    Log.d("AiPay", "模板匹配成功: ${template.name} (${template.channelName})")
-
                     payRepository.createDebugLog(template.channelName, title, displayText, raw)
-
-                    val amount = AmountParser.parseAmountWithMarking(
-                        raw = raw,
-                        amountMarked = template.amountMarked,
-                        minAmount = settings.minAmount
-                    )
-
+                    val amount = AmountParser.parseAmountWithMarking(raw, template.amountMarked, settings.minAmount)
                     if (amount != null) {
-                        Log.d("AiPay", "模板金额解析: amount=$amount")
+                        DebugLog.i("AiPay", "模板[${template.name}]金额解析: ¥$amount")
                         handleMatched(template.channelName, amount, title, displayText, raw)
                         break
                     }
                 }
             } catch (e: Exception) {
                 Log.e("AiPay", "onNotificationPosted 异常", e)
+                DebugLog.e("AiPay", "处理通知异常: ${e.message}")
             }
         }
     }
 
     private suspend fun handleMatched(channel: String, amount: Double, title: String, displayText: String, raw: String) {
         val logId = payRepository.createLog(channel, amount, title, displayText, raw)
-        val ok = payRepository.report(logId)
-        if (!ok) payRepository.enqueueRetry(logId, attempt = 1)
+        val uptime = if (lastConnectedAt > 0) (System.currentTimeMillis() - lastConnectedAt) / 1000 else 0
+        val ok = payRepository.report(logId, uptime = uptime)
+        if (ok) {
+            DebugLog.i("AiPay", "上报成功: $channel ¥$amount")
+        } else {
+            DebugLog.w("AiPay", "上报失败，加入重试队列: $channel ¥$amount")
+            payRepository.enqueueRetry(logId, attempt = 1)
+        }
     }
 
     private fun matchesTemplate(title: String, text: String, template: com.aipay.listener.data.NotificationTemplate): Boolean {
-        // 标题关键词匹配（必填）
         if (template.titleKeyword.isNotBlank()) {
             val keywords = template.titleKeyword.split(",", "，").map { it.trim() }.filter { it.isNotBlank() }
             if (keywords.isEmpty()) return false
@@ -141,21 +168,22 @@ class PayNotificationListener : NotificationListenerService() {
         } else {
             return false
         }
-
-        // 内容关键词匹配（非必填，仅当配置了才匹配）
         if (template.contentKeyword.isNotBlank()) {
             val keywords = template.contentKeyword.split(",", "，").map { it.trim() }.filter { it.isNotBlank() }
             if (keywords.isNotEmpty() && keywords.none { text.contains(it) }) return false
         }
-
         return true
     }
 
     override fun onDestroy() {
+        isServiceCreated = false
+        isServiceConnected = false
         scope.cancel()
+        DebugLog.w("AiPay", "PayNotificationListener onDestroy")
         super.onDestroy()
     }
 
+    // ── 通知原始文本构建（保持不变）──
     private fun buildRawNotification(packageName: String, extras: Bundle): String {
         val parts = mutableListOf("package=$packageName")
         listOf(
@@ -167,19 +195,15 @@ class PayNotificationListener : NotificationListenerService() {
         ).forEach { (label, value) ->
             if (value.isNotBlank()) parts += "$label=$value"
         }
-
         extras.textLines(Notification.EXTRA_TEXT_LINES).forEachIndexed { index, line ->
             if (line.isNotBlank()) parts += "textLine[$index]=$line"
         }
-
-        // 提取 MessagingStyle 消息（微信聚合通知的关键数据源）
         extras.messageBundles(Notification.EXTRA_MESSAGES).forEachIndexed { index, msg ->
             if (msg.isNotBlank()) parts += "message[$index]=$msg"
         }
         extras.messageBundles(Notification.EXTRA_HISTORIC_MESSAGES).forEachIndexed { index, msg ->
             if (msg.isNotBlank()) parts += "historicMessage[$index]=$msg"
         }
-
         return parts.joinToString("\n")
     }
 
@@ -195,7 +219,6 @@ class PayNotificationListener : NotificationListenerService() {
         }
     }
 
-    /** 提取 MessagingStyle 消息中的文本字段（微信聚合通知的关键数据源） */
     private fun Bundle.messageBundles(key: String): List<String> {
         val raw = get(key) ?: return emptyList()
         val array = when (raw) {
@@ -213,6 +236,10 @@ class PayNotificationListener : NotificationListenerService() {
     }
 
     companion object {
+        @Volatile var isServiceCreated = false
+        @Volatile var isServiceConnected = false
+        @Volatile var lastConnectedAt: Long = 0
+
         private val WECHAT_PACKAGES = setOf(
             "com.tencent.mm",
             "com.tencent.mm.work"
@@ -227,6 +254,18 @@ class PayNotificationListener : NotificationListenerService() {
             in WECHAT_PACKAGES -> "wechat"
             in ALIPAY_PACKAGES -> "alipay"
             else -> null
+        }
+
+        /** 打开系统通知监听设置页（唯一有效的手动修复方式） */
+        fun openNotificationSettings(context: android.content.Context) {
+            try {
+                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                DebugLog.i("AiPay", "已打开系统通知监听设置页，请关闭再开启「AiPay转发器」")
+            } catch (e: Exception) {
+                DebugLog.e("AiPay", "无法打开通知监听设置: ${e.message}")
+            }
         }
     }
 }

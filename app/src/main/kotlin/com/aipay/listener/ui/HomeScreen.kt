@@ -25,7 +25,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,13 +53,15 @@ import com.aipay.listener.ui.theme.AiYellow
 fun HomeScreen(
     settings: AppSettings,
     hasNotificationAccess: Boolean,
+    isListenerConnected: Boolean = false,
+    lastConnectedAt: Long = 0,
     serverOnline: Boolean,
     recentLogs: List<PaymentLog>,
     captured: Int,
     success: Int,
     failed: Int,
     onToggleMonitoring: (Boolean) -> Unit,
-    onOpenNotificationSettings: () -> Unit
+    onOpenNotificationSettings: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -64,6 +72,8 @@ fun HomeScreen(
             RunningStatusCard(
                 running = settings.monitoringEnabled,
                 hasNotificationAccess = hasNotificationAccess,
+                isListenerConnected = isListenerConnected,
+                lastConnectedAt = lastConnectedAt,
                 serverOnline = serverOnline,
                 onOpenNotificationSettings = onOpenNotificationSettings
             )
@@ -103,26 +113,31 @@ fun HomeScreen(
 private fun RunningStatusCard(
     running: Boolean,
     hasNotificationAccess: Boolean,
+    isListenerConnected: Boolean = false,
+    lastConnectedAt: Long = 0,
     serverOnline: Boolean,
     onOpenNotificationSettings: () -> Unit
 ) {
-    val background = if (running) AiYellow else AiMuted
-
-    // 服务连接状态（右上角）
-    val svcConnected = running && hasNotificationAccess
-    val svcDotColor = when {
-        svcConnected -> Color(0xFF1F9D55)
-        running -> Color(0xFFF59E0B)
-        else -> Color(0xFF9CA3AF)
-    }
-    val svcLabel = when {
-        svcConnected -> "已连接"
-        running -> "未授权"
-        else -> "已停止"
-    }
-
-    // 服务器连接状态（右上角下方）
+    // 无通知权限时卡片置灰，不显示「运行中」
+    val isEffectivelyRunning = running && hasNotificationAccess
+    val background = if (isEffectivelyRunning) AiYellow else AiMuted
     val srvDotColor = if (serverOnline) Color(0xFF1F9D55) else Color(0xFFEF4444)
+
+    // 正计时：每秒更新一次（用 rememberUpdatedState 读取 lastConnectedAt 最新值）
+    val currentLastConnectedAt by rememberUpdatedState(lastConnectedAt)
+    var elapsedSeconds by remember { mutableStateOf(0L) }
+    LaunchedEffect(isEffectivelyRunning) {
+        if (isEffectivelyRunning) {
+            while (true) {
+                elapsedSeconds = if (currentLastConnectedAt > 0) {
+                    (System.currentTimeMillis() - currentLastConnectedAt) / 1000
+                } else 0
+                delay(1000)
+            }
+        } else {
+            elapsedSeconds = 0
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -131,8 +146,8 @@ private fun RunningStatusCard(
             .background(background, RectangleShape)
             .border(1.5.dp, AiBlack, RectangleShape)
     ) {
-        // GIF 斜线动效：仅运行时显示，固定在卡片底部区域
-        if (running) {
+        // GIF 斜线动效：仅有效运行时显示
+        if (isEffectivelyRunning) {
             val context = LocalContext.current
             AsyncImage(
                 model = ImageRequest.Builder(context)
@@ -148,27 +163,13 @@ private fun RunningStatusCard(
             )
         }
 
-        // 右上角状态指示器
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 10.dp, end = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            horizontalAlignment = Alignment.End
-        ) {
-            // 服务连接状态
-            ServiceStatusDot(
-                dotColor = svcDotColor,
-                label = svcLabel,
-                pulsing = svcConnected
-            )
-            // 服务器连接状态
-            ServiceStatusDot(
-                dotColor = srvDotColor,
-                label = if (serverOnline) "服务器在线" else "服务器离线",
-                pulsing = serverOnline
-            )
-        }
+        // 服务器状态指示（右上角）
+        ServerStatusDot(
+            dotColor = srvDotColor,
+            label = if (serverOnline) "服务器在线" else "服务器离线",
+            pulsing = serverOnline,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp)
+        )
 
         Column(
             modifier = Modifier
@@ -177,19 +178,27 @@ private fun RunningStatusCard(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                if (running) "运行中" else "已停止",
+                when {
+                    !hasNotificationAccess -> "需要授权"
+                    isEffectivelyRunning -> "运行中"
+                    else -> "已停止"
+                },
                 color = AiBlack,
                 style = MaterialTheme.typography.headlineLarge
             )
             Text(
                 when {
-                    running && hasNotificationAccess -> "正在捕获收款消息"
-                    !hasNotificationAccess -> "系统通知监听：未授权"
-                    else -> "系统通知监听：已授权"
+                    !hasNotificationAccess ->
+                        "请授予「通知使用权」才能捕获支付消息"
+                    isEffectivelyRunning && isListenerConnected ->
+                        "${formatDuration(elapsedSeconds)}  ·  正在捕获收款消息"
+                    isEffectivelyRunning && !isListenerConnected ->
+                        "${formatDuration(elapsedSeconds)}  ·  ⚠ 监听器未连接"
+                    else -> "总开关已关闭"
                 },
                 color = AiBlack
             )
-            if (!hasNotificationAccess && !running) {
+            if (!hasNotificationAccess) {
                 BrutalButton(
                     "去授权",
                     onOpenNotificationSettings,
@@ -201,13 +210,13 @@ private fun RunningStatusCard(
 }
 
 @Composable
-private fun ServiceStatusDot(
+private fun ServerStatusDot(
     dotColor: Color,
     label: String,
-    pulsing: Boolean
+    pulsing: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition()
-
     val dotAlpha by if (pulsing) {
         infiniteTransition.animateFloat(
             initialValue = 1f,
@@ -219,13 +228,14 @@ private fun ServiceStatusDot(
         )
     } else {
         infiniteTransition.animateFloat(
-            initialValue = 0.5f,
-            targetValue = 0.5f,
+            initialValue = 1f,
+            targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(1))
         )
     }
 
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -243,3 +253,16 @@ private fun ServiceStatusDot(
         )
     }
 }
+
+private fun formatDuration(totalSeconds: Long): String {
+    if (totalSeconds <= 0) return "00:00"
+    val h = totalSeconds / 3600
+    val m = (totalSeconds % 3600) / 60
+    val s = totalSeconds % 60
+    return if (h > 0) {
+        "${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+    } else {
+        "${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+    }
+}
+
