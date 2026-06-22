@@ -19,7 +19,9 @@ data class AppSettings(
     val listenWechat: Boolean = true,
     val listenAlipay: Boolean = true,
     val minAmount: Double = 0.0,
-    val monitoringEnabled: Boolean = true
+    val monitoringEnabled: Boolean = true,
+    val floatingWindowEnabled: Boolean = false,
+    val musicKeepAliveEnabled: Boolean = false
 )
 
 class SettingsRepository(private val context: Context) {

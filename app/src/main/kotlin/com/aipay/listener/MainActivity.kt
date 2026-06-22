@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -51,7 +50,6 @@ import com.aipay.listener.service.KeepAliveService
 import com.aipay.listener.service.DebugLog
 import com.aipay.listener.service.PayNotificationListener
 import com.aipay.listener.ui.HomeScreen
-import com.aipay.listener.ui.LogsScreen
 import com.aipay.listener.ui.OrdersScreen
 import com.aipay.listener.ui.PermissionState
 import com.aipay.listener.ui.DebugScreen
@@ -232,7 +230,7 @@ private fun AiPayAppContent(
     var isLoadingOrders by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
     val navController = rememberNavController()
-    val items = listOf(Screen.Home, Screen.Orders, Screen.Logs, Screen.Settings, Screen.Debug)
+    val items = listOf(Screen.Home, Screen.Orders, Screen.Settings, Screen.Debug)
 
     // 权限状态列表
     val permissionStates = remember(hasNotificationAccess, hasPostNotificationPermission, isBatteryOptimizationIgnored) {
@@ -376,9 +374,6 @@ private fun AiPayAppContent(
                     }
                 )
             }
-            composable(Screen.Logs.route) {
-                LogsScreen(logs = allLogs, onRefresh = {})
-            }
             composable(Screen.Debug.route) {
                 DebugScreen()
             }
@@ -393,7 +388,6 @@ private sealed class Screen(
 ) {
     data object Home : Screen("home", "首页", Icons.Default.Home)
     data object Orders : Screen("orders", "订单", Icons.Default.Receipt)
-    data object Logs : Screen("logs", "日志", Icons.Default.List)
     data object Settings : Screen("settings", "设置", Icons.Default.Settings)
     data object Debug : Screen("debug", "调试", Icons.Default.Star)
 }
