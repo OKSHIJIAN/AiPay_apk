@@ -13,7 +13,6 @@ build/
 
 # Gradle
 .gradle/
-gradle-wrapper.jar
 
 # OS
 .DS_Store
