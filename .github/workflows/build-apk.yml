@@ -22,14 +22,28 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: "platforms;android-34 build-tools;34.0.0"
+        run: |
+          export ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+
+          # Find sdkmanager
+          SDKMANAGER=$(find $ANDROID_HOME -name sdkmanager -type f 2>/dev/null | head -1)
+          echo "sdkmanager=$SDKMANAGER"
+
+          if [ -n "$SDKMANAGER" ]; then
+            yes | $SDKMANAGER --licenses 2>/dev/null || true
+            $SDKMANAGER "platforms;android-34" "build-tools;34.0.0" 2>&1
+          fi
+
+          # Verify
+          ls $ANDROID_HOME/platforms/ 2>/dev/null || echo "! no platforms dir"
+          ls $ANDROID_HOME/build-tools/ 2>/dev/null || echo "! no build-tools dir"
 
       - name: Build Debug APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --stacktrace
 
       - name: Rename APK
         run: mv app/build/outputs/apk/debug/app-debug.apk AiPay.apk
