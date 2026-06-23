@@ -10,6 +10,7 @@ build/
 .idea/
 *.iml
 .local.properties
+local.properties
 
 # Gradle
 .gradle/
