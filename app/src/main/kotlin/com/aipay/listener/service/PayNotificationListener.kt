@@ -154,9 +154,26 @@ class PayNotificationListener : NotificationListenerService() {
         val ok = payRepository.report(logId, uptime = uptime)
         if (ok) {
             DebugLog.i("AiPay", "上报成功: $channel ¥$amount")
+            // 主动推送最新数据给网页端，避免等 5 秒轮询
+            pushUpdateToWeb()
         } else {
             DebugLog.w("AiPay", "上报失败，加入重试队列: $channel ¥$amount")
             payRepository.enqueueRetry(logId, attempt = 1)
+        }
+    }
+
+    /** 通过 RealtimeClient 单例主动推送最新支付数据给网页端 */
+    private fun pushUpdateToWeb() {
+        try {
+            val client = RealtimeClient.instance
+            if (client != null && client.isConnected()) {
+                client.broadcastCurrentStatus()
+                Log.d("AiPay", "[Realtime] 已触发主动推送")
+            } else {
+                Log.d("AiPay", "[Realtime] RealtimeClient 未连接，跳过主动推送")
+            }
+        } catch (e: Exception) {
+            Log.e("AiPay", "[Realtime] 推送异常: ${e.message}")
         }
     }
 

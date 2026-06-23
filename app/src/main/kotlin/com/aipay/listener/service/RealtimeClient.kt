@@ -73,7 +73,26 @@ class RealtimeClient(
         webSocket?.close(1000, "service stopped")
         webSocket = null
         connected = false
+        if (Companion.instance == this) Companion.instance = null
     }
+
+    /**
+     * 主动推送最新支付数据给网页端。
+     * 由 PayNotificationListener 在成功上报后调用，确保网页立即收到更新。
+     */
+    fun broadcastCurrentStatus() {
+        if (!connected || webSocket == null) {
+            Log.d("AiPay", "[Realtime] 未连接，跳过 broadcastCurrentStatus")
+            return
+        }
+        scope.launch {
+            respondWithStatus()
+            Log.d("AiPay", "[Realtime] 主动推送 phone_data 完成")
+        }
+    }
+
+    /** 检查当前是否已连接 */
+    fun isConnected(): Boolean = connected
 
     // ── 连接循环（断线自动重连）──
     private suspend fun connectLoop() {
@@ -304,5 +323,10 @@ class RealtimeClient(
                 entries.firstOrNull()?.get("value")?.toString()?.trim('"') ?: ""
             }
         }.getOrDefault("")
+    }
+
+    companion object {
+        @Volatile
+        var instance: RealtimeClient? = null
     }
 }

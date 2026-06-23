@@ -36,7 +36,10 @@ class KeepAliveService : Service() {
 
         // 启动 Realtime 连接（与网页端实时通信）
         val settingsRepository = SettingsRepository(this)
-        realtimeClient = RealtimeClient(this, settingsRepository).also { it.start() }
+        realtimeClient = RealtimeClient(this, settingsRepository).also {
+            it.start()
+            RealtimeClient.instance = it  // 注册单例，供 PayNotificationListener 使用
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
