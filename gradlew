@@ -2,7 +2,7 @@
 
 APP_HOME=$(cd "${0%/*}" || exit 1; pwd -P)
 APP_NAME=${0##*/}
-DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+DEFAULT_JVM_OPTS='-Xmx64m -Xms64m'
 
 if [ -n "$JAVA_HOME" ]; then
     JAVA_EXE="$JAVA_HOME/bin/java"
